@@ -1,0 +1,61 @@
+# created the Federated credentials based on https://docs.microsoft.com/en-us/azure/developer/github/connect-from-azure?tabs=azure-portal%2Cwindows#use-the-azure-login-action-with-openid-connect
+name: Build + Deploy with manual setup w/ federated creds
+permissions:
+  id-token: write
+  contents: read
+on:
+  push:
+    branches:
+    - manual-federated
+  workflow_dispatch:
+env:
+  AZURE_CLIENT_ID: 0aed1756-5e55-41e6-be5d-e2eb6c775680
+  AZURE_TENANT_ID: efe5e81e-7eb5-4ed6-9e97-b95f75337b4f
+  AZURE_SUBSCRIPTION_ID: de230f33-c290-4ade-ae75-76f60f4bed6f
+  AZURE_RG_NAME: rp-static-web-app-demo
+  APP_NAME: static-web-app-manual-federated
+
+jobs:
+  azure-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # Log into Azure
+    - uses: azure/login@v1
+      with:
+        client-id: ${{ env.AZURE_CLIENT_ID }}
+        tenant-id: ${{ env.AZURE_TENANT_ID }}
+        subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+    # Deploy Bicep file
+    - name: deploy
+      uses: azure/arm-deploy@v1
+      with:
+        subscriptionId: ${{ env.AZURE_SUBSCRIPTION_ID }}
+        resourceGroupName: ${{ env.AZURE_RG_NAME }}
+        template: ./infrastructure.bicep
+        parameters: name=${{ env.APP_NAME }}
+        failOnStdErr: false
+
+    # Get the token from the Static Web App that is needed to do the deployment
+    - name: Get SWA deployment token
+      uses: azure/CLI@v1
+      id: swa-token
+      with:
+        inlineScript: |
+          SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list -n ${{ env.APP_NAME }} -o tsv --query properties.apiKey)
+          echo "::add-mask::$SWA_DEPLOYMENT_TOKEN"
+          echo SWA_DEPLOYMENT_TOKEN=$SWA_DEPLOYMENT_TOKEN >> $GITHUB_ENV
+    
+    # Build and deploy application
+    - name: Build And Deploy
+      id: builddeploy
+      uses: Azure/static-web-apps-deploy@v1
+      with:
+        azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+        action: "upload"
+        app_location: "/" # App source code path
+        api_location: "" # Api source code path - optional
+        output_location: "dist" # Built app content directory - optional
